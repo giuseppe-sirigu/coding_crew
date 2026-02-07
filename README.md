@@ -1,3 +1,5 @@
+![Hero Image](./.assets/coding_crew_hero.png)
+
 # Coding Crew
 
 A local AI coding agent swarm exposed as an MCP server for the [Continue](https://continue.dev) VS Code extension. It uses [CrewAI](https://www.crewai.com/) to orchestrate four specialised agents — Architect, Coder, Reviewer, and Tester — all powered by a local LLM served via [Ollama](https://ollama.com) or [vLLM](https://github.com/vllm-project/vllm).
