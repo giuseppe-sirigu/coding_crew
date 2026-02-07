@@ -1,0 +1,40 @@
+name: Local Config
+version: 1.0.0
+schema: v1
+
+models:
+  - name: Local Coder
+    provider: openai
+    model: %%MODEL%%
+    apiBase: http://localhost:%%PORT%%/v1
+    apiKey: dummy-key
+    roles:
+      - chat
+      - edit
+      - apply
+    defaultCompletionOptions:
+      temperature: 0.1
+      maxTokens: 2000
+
+  - name: Local Autocomplete
+    provider: openai
+    model: %%MODEL%%
+    apiBase: http://localhost:%%PORT%%/v1
+    apiKey: dummy-key
+    roles:
+      - autocomplete
+    autocompleteOptions:
+      debounceDelay: 250
+      maxPromptTokens: 1024
+
+mcpServers:
+  - name: coding-swarm
+    command: %%PROJECT_DIR%%/.venv/bin/python
+    args:
+      - %%PROJECT_DIR%%/swarm_mcp_server.py
+    env:
+      OPENAI_API_BASE: http://localhost:%%PORT%%/v1
+      OPENAI_API_KEY: dummy-key
+      OPENAI_MODEL_NAME: %%MODEL%%
+    autoApprove: true
+    timeout: 300000
