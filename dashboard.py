@@ -24,6 +24,10 @@ from rich.text import Text
 LOG_PATH = "/tmp/swarm_mcp_server.log"
 REFRESH_INTERVAL = 2
 
+# State for computing real-time token rates
+_prev_vllm: dict[str, float] = {}  # previous metric snapshot
+_prev_vllm_time: float = 0.0
+
 # ---------------------------------------------------------------------------
 # Data collectors
 # ---------------------------------------------------------------------------
@@ -165,7 +169,17 @@ def render_gpu_panel(gpus: list[dict]) -> Panel:
     return Panel(table, title="GPU", border_style="green")
 
 
+def _lookup_metric(metrics: dict, *candidates: str) -> float:
+    """Return the first matching metric value from a list of candidate names."""
+    for name in candidates:
+        if name in metrics:
+            return metrics[name]
+    return 0.0
+
+
 def render_vllm_panel(metrics: dict, port: int, healthy: bool) -> Panel:
+    global _prev_vllm, _prev_vllm_time
+
     if not healthy:
         return Panel(
             Text(f"vLLM not responding on port {port}", style="dim italic"),
@@ -177,18 +191,54 @@ def render_vllm_panel(metrics: dict, port: int, healthy: bool) -> Panel:
     table.add_column("Metric", style="bold")
     table.add_column("Value", justify="right")
 
-    prompt_tokens = metrics.get("vllm:prompt_tokens_total", 0)
-    gen_tokens = metrics.get("vllm:generation_tokens_total", 0)
-    running = metrics.get("vllm:num_requests_running", 0)
-    waiting = metrics.get("vllm:num_requests_waiting", 0)
-    avg_ttft = metrics.get("vllm:time_to_first_token_seconds_sum", 0)
-    avg_ttft_count = metrics.get("vllm:time_to_first_token_seconds_count", 0)
-    avg_tpot = metrics.get("vllm:time_per_output_token_seconds_sum", 0)
-    avg_tpot_count = metrics.get("vllm:time_per_output_token_seconds_count", 0)
+    # vLLM metric names vary across versions (colons vs underscores)
+    prompt_tokens = _lookup_metric(
+        metrics, "vllm:prompt_tokens_total", "vllm_prompt_tokens_total"
+    )
+    gen_tokens = _lookup_metric(
+        metrics, "vllm:generation_tokens_total", "vllm_generation_tokens_total"
+    )
+    running = _lookup_metric(
+        metrics, "vllm:num_requests_running", "vllm_num_requests_running"
+    )
+    waiting = _lookup_metric(
+        metrics, "vllm:num_requests_waiting", "vllm_num_requests_waiting"
+    )
+    avg_ttft = _lookup_metric(
+        metrics,
+        "vllm:time_to_first_token_seconds_sum",
+        "vllm_time_to_first_token_seconds_sum",
+    )
+    avg_ttft_count = _lookup_metric(
+        metrics,
+        "vllm:time_to_first_token_seconds_count",
+        "vllm_time_to_first_token_seconds_count",
+    )
+
+    # --- Real-time token rates (delta / elapsed) ---
+    now = time.time()
+    elapsed = now - _prev_vllm_time if _prev_vllm_time else 0.0
+    prompt_rate = 0.0
+    gen_rate = 0.0
+    if elapsed > 0 and _prev_vllm:
+        dp = prompt_tokens - _prev_vllm.get("prompt_tokens", prompt_tokens)
+        dg = gen_tokens - _prev_vllm.get("gen_tokens", gen_tokens)
+        prompt_rate = max(dp, 0) / elapsed
+        gen_rate = max(dg, 0) / elapsed
+    _prev_vllm = {"prompt_tokens": prompt_tokens, "gen_tokens": gen_tokens}
+    _prev_vllm_time = now
 
     table.add_row("Status", Text("● Online", style="bold green"))
     table.add_row("Prompt tokens (total)", f"{prompt_tokens:,.0f}")
     table.add_row("Generated tokens (total)", f"{gen_tokens:,.0f}")
+    table.add_row(
+        "Prompt tok/s",
+        Text(f"{prompt_rate:,.1f}", style="bold cyan"),
+    )
+    table.add_row(
+        "Generation tok/s",
+        Text(f"{gen_rate:,.1f}", style="bold cyan"),
+    )
     table.add_row("Requests running", f"{running:.0f}")
     table.add_row("Requests waiting", f"{waiting:.0f}")
 
@@ -196,17 +246,6 @@ def render_vllm_panel(metrics: dict, port: int, healthy: bool) -> Panel:
         table.add_row(
             "Avg time to first token",
             f"{avg_ttft / avg_ttft_count:.3f} s",
-        )
-    if avg_tpot_count > 0:
-        tpot = avg_tpot / avg_tpot_count
-        tok_per_sec = 1.0 / tpot if tpot > 0 else 0
-        table.add_row(
-            "Avg time per output token",
-            f"{tpot:.3f} s",
-        )
-        table.add_row(
-            "Token generation rate",
-            Text(f"{tok_per_sec:.1f} tok/s", style="bold cyan"),
         )
 
     return Panel(table, title="vLLM Server", border_style="blue")
