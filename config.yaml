@@ -37,4 +37,4 @@ mcpServers:
       OPENAI_API_KEY: dummy-key
       OPENAI_MODEL_NAME: %%MODEL%%
     autoApprove: true
-    timeout: 300000
+    timeout: 3000000

@@ -58,7 +58,7 @@ class CodingSwarm:
             role='Software Architect',
             goal='Design clean, scalable code architecture',
             backstory='Expert software architect with 15 years of experience',
-            verbose=True,
+            verbose=False,
             allow_delegation=True,
             llm=local_llm
         )
@@ -67,7 +67,7 @@ class CodingSwarm:
             role='Senior Developer',
             goal='Write high-quality, efficient code',
             backstory='Senior developer who writes clean, tested code',
-            verbose=True,
+            verbose=False,
             allow_delegation=False,
             llm=local_llm
         )
@@ -76,7 +76,7 @@ class CodingSwarm:
             role='Code Reviewer',
             goal='Review code for bugs and best practices',
             backstory='Meticulous code reviewer with security focus',
-            verbose=True,
+            verbose=False,
             allow_delegation=False,
             llm=local_llm
         )
@@ -85,7 +85,7 @@ class CodingSwarm:
             role='QA Engineer',
             goal='Write comprehensive tests',
             backstory='QA engineer who believes in test-driven development',
-            verbose=True,
+            verbose=False,
             allow_delegation=False,
             llm=local_llm
         )
@@ -128,7 +128,7 @@ class CodingSwarm:
             agents=[self.architect, self.coder, self.reviewer, self.tester],
             tasks=[design_task, implement_task, review_task, test_task],
             process=Process.sequential,
-            verbose=2
+            verbose=False  # Ensure verbose is a boolean
         )
         
         result = crew.kickoff()
@@ -152,7 +152,7 @@ class CodingSwarm:
         crew = Crew(
             agents=[self.coder],
             tasks=[task],
-            verbose=1
+            verbose=False
         )
         
         result = crew.kickoff()
@@ -172,7 +172,7 @@ class CodingSwarm:
         crew = Crew(
             agents=[self.reviewer],
             tasks=[task],
-            verbose=1
+            verbose=False
         )
         
         result = crew.kickoff()
@@ -192,7 +192,7 @@ class CodingSwarm:
         crew = Crew(
             agents=[self.tester],
             tasks=[task],
-            verbose=1
+            verbose=False
         )
         
         result = crew.kickoff()
