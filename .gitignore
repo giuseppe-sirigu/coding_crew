@@ -226,3 +226,7 @@ terraform.rc
 .aim/
 recordings/
 test.csv
+
+# Phoenix tracing data
+phoenix_data/
+.arize/

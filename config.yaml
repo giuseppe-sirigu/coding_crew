@@ -36,5 +36,9 @@ mcpServers:
       OPENAI_API_BASE: http://localhost:%%PORT%%/v1
       OPENAI_API_KEY: dummy-key
       OPENAI_MODEL_NAME: %%MODEL%%
+      SWARM_BACKEND: %%BACKEND%%
+      ENABLE_TRACING: "%%TRACING%%"
+      PHOENIX_ENDPOINT: "http://localhost:6006/v1/traces"
+      PHOENIX_PROJECT_NAME: "coding-crew"
     autoApprove: true
-    timeout: 3000000
+    connectionTimeout: 3000000

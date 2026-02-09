@@ -100,11 +100,22 @@ def get_ollama_stats(port: int) -> list[dict]:
         return []
 
 
-def check_server_health(port: int) -> bool:
+def check_server_health(port: int, backend: str = "vllm") -> bool:
     """Quick connectivity check."""
     try:
-        url = f"http://localhost:{port}/v1/models"
+        path = "/api/tags" if backend == "ollama" else "/v1/models"
+        url = f"http://localhost:{port}{path}"
         with urllib.request.urlopen(url, timeout=2):
+            return True
+    except Exception:
+        return False
+
+
+def check_phoenix_health(port: int = 6006) -> bool:
+    """Check if Phoenix tracing server is running."""
+    try:
+        url = f"http://localhost:{port}/healthz"
+        with urllib.request.urlopen(url, timeout=1):
             return True
     except Exception:
         return False
@@ -287,7 +298,7 @@ def render_ollama_panel(models: list[dict], port: int, healthy: bool) -> Panel:
     return Panel(table, title="Ollama Server", border_style="blue")
 
 
-def render_log_panel(lines: list[str]) -> Panel:
+def render_log_panel(lines: list[str], phoenix_online: bool) -> Panel:
     text = Text()
     for line in lines:
         stripped = line.rstrip("\n")
@@ -297,7 +308,13 @@ def render_log_panel(lines: list[str]) -> Panel:
             text.append(stripped + "\n", style="yellow")
         else:
             text.append(stripped + "\n", style="dim")
-    return Panel(text, title="MCP Server Log", border_style="magenta")
+
+    if phoenix_online:
+        phoenix_status = "Phoenix: [green]Online[/green] http://localhost:6006"
+    else:
+        phoenix_status = "Phoenix: [dim]Offline[/dim]"
+
+    return Panel(text, title="MCP Server Log", subtitle=phoenix_status, border_style="magenta")
 
 
 # ---------------------------------------------------------------------------
@@ -322,8 +339,8 @@ def main():
     parser.add_argument(
         "--port",
         type=int,
-        default=int(os.environ.get("SWARM_PORT", "8000")),
-        help="LLM server port (default: 8000)",
+        default=None,
+        help="LLM server port (default: 11434 for ollama, 8000 for vllm)",
     )
     parser.add_argument(
         "--backend",
@@ -332,6 +349,12 @@ def main():
         help="LLM backend (default: ollama)",
     )
     args = parser.parse_args()
+
+    if args.port is None:
+        args.port = int(os.environ.get(
+            "SWARM_PORT",
+            "11434" if args.backend == "ollama" else "8000",
+        ))
 
     console = Console()
     layout = build_layout()
@@ -343,7 +366,7 @@ def main():
             layout["gpu"].update(render_gpu_panel(gpus))
 
             # LLM server
-            healthy = check_server_health(args.port)
+            healthy = check_server_health(args.port, args.backend)
             if args.backend == "vllm":
                 metrics = get_vllm_metrics(args.port) if healthy else {}
                 layout["llm"].update(
@@ -355,9 +378,10 @@ def main():
                     render_ollama_panel(models, args.port, healthy)
                 )
 
-            # MCP log
+            # MCP log + Phoenix status
             lines = tail_log(LOG_PATH)
-            layout["bottom"].update(render_log_panel(lines))
+            phoenix_online = check_phoenix_health()
+            layout["bottom"].update(render_log_panel(lines, phoenix_online))
 
             time.sleep(REFRESH_INTERVAL)
 
