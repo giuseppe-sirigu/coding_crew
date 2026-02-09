@@ -7,7 +7,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: ./configure_swarm.sh -p PORT -m MODEL -d DIR [-b BACKEND]
+Usage: ./configure_swarm.sh -p PORT -m MODEL -d DIR [-b BACKEND] [-t]
 
 Required:
   -p PORT      Port for the LLM API server (e.g. 8000)
@@ -18,11 +18,13 @@ Required:
 
 Optional:
   -b BACKEND   LLM backend: "vllm" or "ollama" (default: ollama)
+  -t           Enable Arize Phoenix tracing (default: disabled)
   -h           Show this help
 
 Examples:
   ./configure_swarm.sh -p 8000 -m Qwen/Qwen2.5-Coder-14B-Instruct-AWQ -d ~/my-project -b vllm
   ./configure_swarm.sh -p 11434 -m qwen2.5-coder:14b -d ~/my-project -b ollama
+  ./configure_swarm.sh -p 11434 -m qwen2.5-coder:14b -d ~/my-project -t
 EOF
   exit 1
 }
@@ -31,13 +33,15 @@ PORT=""
 MODEL=""
 DIR=""
 BACKEND="ollama"
+TRACING="false"
 
-while getopts ":p:m:d:b:h" opt; do
+while getopts ":p:m:d:b:th" opt; do
   case ${opt} in
     p) PORT="${OPTARG}" ;;
     m) MODEL="${OPTARG}" ;;
     d) DIR="${OPTARG}" ;;
     b) BACKEND="${OPTARG}" ;;
+    t) TRACING="true" ;;
     h) usage ;;
     :) echo "Error: -${OPTARG} requires an argument." >&2; usage ;;
     \?) echo "Error: invalid option -${OPTARG}" >&2; usage ;;
@@ -66,6 +70,7 @@ echo " Port:      ${PORT}"
 echo " Model:     ${MODEL}"
 echo " Directory: ${DIR}"
 echo " Backend:   ${BACKEND}"
+echo " Tracing:   ${TRACING}"
 echo "============================================"
 echo ""
 
@@ -96,6 +101,11 @@ if [[ "${BACKEND}" == "vllm" ]]; then
   "${VENV_DIR}/bin/pip" install vllm --quiet
 fi
 
+echo "Installing tracing dependencies (optional)..."
+"${VENV_DIR}/bin/pip" install \
+  arize-phoenix openinference-instrumentation-crewai \
+  --quiet 2>/dev/null || echo "Warning: Could not install tracing deps (non-fatal)"
+
 echo "Dependencies installed."
 echo ""
 
@@ -111,6 +121,13 @@ if [[ "${BACKEND}" == "ollama" ]]; then
     echo "Installing Ollama..."
     curl -fsSL https://ollama.com/install.sh | sh
     echo "Ollama installed."
+  fi
+
+  # Start ollama serve if not already running
+  if ! pgrep -x ollama >/dev/null 2>&1; then
+    echo "Starting Ollama server..."
+    ollama serve &>/dev/null &
+    sleep 3
   fi
 
   echo "Pulling model ${MODEL}..."
@@ -164,6 +181,8 @@ fi
 if [[ "$(realpath "${SCRIPT_DIR}")" != "$(realpath "${DIR}")" ]]; then
   cp "${PY_SRC}" "${DIR}/swarm_mcp_server.py"
   cp "${SCRIPT_DIR}/dashboard.py" "${DIR}/dashboard.py" 2>/dev/null || true
+  cp "${SCRIPT_DIR}/tracing.py" "${DIR}/tracing.py" 2>/dev/null || true
+  cp "${SCRIPT_DIR}/start_phoenix.py" "${DIR}/start_phoenix.py" 2>/dev/null || true
   echo "Copied swarm_mcp_server.py → ${DIR}/"
 fi
 
@@ -177,6 +196,8 @@ cp "${CONFIG_TEMPLATE}" "${CONFIG_OUT}"
 sed -i "s|%%PORT%%|${PORT}|g"        "${CONFIG_OUT}"
 sed -i "s|%%MODEL%%|${MODEL}|g"      "${CONFIG_OUT}"
 sed -i "s|%%PROJECT_DIR%%|${DIR}|g"  "${CONFIG_OUT}"
+sed -i "s|%%BACKEND%%|${BACKEND}|g"  "${CONFIG_OUT}"
+sed -i "s|%%TRACING%%|${TRACING}|g"  "${CONFIG_OUT}"
 
 echo "Generated ${CONFIG_OUT}"
 echo ""
@@ -217,8 +238,19 @@ if [[ "${BACKEND}" == "vllm" ]]; then
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "Starting vLLM server on port ${PORT}..."
 source "${VENV_DIR}/bin/activate"
+
+# --- Optional: start Phoenix tracing server ---
+ENABLE_TRACING="\${ENABLE_TRACING:-${TRACING}}"
+if [[ "\${ENABLE_TRACING}" == "true" ]]; then
+  echo "Starting Phoenix tracing server..."
+  python "${DIR}/start_phoenix.py" &
+  PHOENIX_PID=\$!
+  echo "Phoenix started (PID: \$PHOENIX_PID) — UI at http://localhost:6006"
+  echo ""
+fi
+
+echo "Starting vLLM server on port ${PORT}..."
 
 python -m vllm.entrypoints.openai.api_server ${VLLM_ARGS} &
 VLLM_PID=\$!
@@ -248,6 +280,18 @@ elif [[ "${BACKEND}" == "ollama" ]]; then
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "${VENV_DIR}/bin/activate"
+
+# --- Optional: start Phoenix tracing server ---
+ENABLE_TRACING="\${ENABLE_TRACING:-${TRACING}}"
+if [[ "\${ENABLE_TRACING}" == "true" ]]; then
+  echo "Starting Phoenix tracing server..."
+  python "${DIR}/start_phoenix.py" &
+  PHOENIX_PID=\$!
+  echo "Phoenix started (PID: \$PHOENIX_PID) — UI at http://localhost:6006"
+  echo ""
+fi
+
 echo "Starting Ollama..."
 
 # Start Ollama if not already running
@@ -267,7 +311,10 @@ ollama pull "${MODEL}" 2>/dev/null || true
 echo ""
 echo "Swarm is ready! Open VS Code and use Continue."
 echo "Ollama API: http://localhost:${PORT}"
-wait 2>/dev/null || true
+echo "Press Ctrl+C to stop."
+
+trap 'echo " Shutting down..."; kill 0 2>/dev/null; exit 0' INT TERM
+while true; do sleep 1; done
 EOF
 fi
 
@@ -291,6 +338,16 @@ echo "  3. Use Continue (Ctrl+L) to chat with your coding swarm"
 echo ""
 echo "Optional – launch the monitoring dashboard:"
 echo "  ${VENV_DIR}/bin/python ${DIR}/dashboard.py --port ${PORT} --backend ${BACKEND}"
+echo ""
+if [[ "${TRACING}" == "true" ]]; then
+  echo "Phoenix tracing is ENABLED."
+  echo "  Phoenix will start automatically with start_swarm.sh"
+  echo "  Phoenix UI: http://localhost:6006"
+else
+  echo "To enable Phoenix tracing, re-run with -t:"
+  echo "  ./configure_swarm.sh -p ${PORT} -m ${MODEL} -d ${DIR} -b ${BACKEND} -t"
+  echo "Or override at runtime: ENABLE_TRACING=true ${START_SCRIPT}"
+fi
 echo ""
 echo "The MCP server is launched automatically by Continue."
 echo "MCP log file: /tmp/swarm_mcp_server.log"

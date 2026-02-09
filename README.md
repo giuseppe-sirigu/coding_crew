@@ -57,7 +57,7 @@ Open VS Code, press **Ctrl+L**, and start chatting with Continue.
 ### Options
 
 ```
-Usage: ./configure_swarm.sh -p PORT -m MODEL -d DIR [-b BACKEND]
+Usage: ./configure_swarm.sh -p PORT -m MODEL -d DIR [-b BACKEND] [-t]
 
 Required:
   -p PORT      Port for the LLM API server (e.g. 8000)
@@ -68,6 +68,7 @@ Required:
 
 Optional:
   -b BACKEND   LLM backend: "vllm" or "ollama" (default: ollama)
+  -t           Enable Arize Phoenix tracing (default: disabled)
   -h           Show this help
 ```
 
@@ -188,6 +189,9 @@ The MCP server reads its configuration from environment variables (set automatic
 | `OPENAI_API_BASE` | `http://localhost:8000/v1` | Base URL of the LLM API |
 | `OPENAI_API_KEY` | `dummy-key` | API key (not used by local backends, but required by the client) |
 | `OPENAI_MODEL_NAME` | `Qwen/Qwen2.5-Coder-14B-Instruct-AWQ` | Model identifier |
+| `ENABLE_TRACING` | `false` | Set to `true` to send traces to Arize Phoenix |
+| `PHOENIX_ENDPOINT` | `http://localhost:6006/v1/traces` | Phoenix OTLP endpoint |
+| `PHOENIX_PROJECT_NAME` | `coding-crew` | Project name shown in the Phoenix UI |
 
 ### Files
 
@@ -198,6 +202,78 @@ The MCP server reads its configuration from environment variables (set automatic
 | `config.yaml` | Continue configuration template (placeholders are filled by the setup script) |
 | `start_swarm.sh` | Generated startup script for the LLM server (created by setup) |
 | `dashboard.py` | Rich-based live monitoring dashboard |
+| `tracing.py` | Optional Arize Phoenix tracing setup (imported by the MCP server) |
+| `start_phoenix.py` | Launches the Phoenix tracing UI server |
+
+## Tracing
+
+The swarm supports optional tracing via [Arize Phoenix](https://github.com/Arize-AI/phoenix), an open-source LLM observability tool. Phoenix runs as a local Python process — no Docker, no cloud account, no data leaving your machine.
+
+When enabled, every crew kickoff, agent execution, task, and LLM call is recorded as an OpenTelemetry span and displayed in a browser-based timeline UI.
+
+### Setup
+
+```bash
+# Install dependencies (already done by configure_swarm.sh)
+pip install arize-phoenix openinference-instrumentation-crewai
+```
+
+### Usage
+
+**Option A: Enable at setup time** — pass `-t` to the setup script and everything is pre-configured:
+
+```bash
+./configure_swarm.sh -p 11434 -m qwen2.5-coder:14b -d ~/my-project -t
+```
+
+Then just run `./start_swarm.sh` as usual — Phoenix starts automatically in the background.
+
+**Option B: Enable at runtime** — if you didn't pass `-t` during setup, you can override at launch:
+
+```bash
+ENABLE_TRACING=true ./start_swarm.sh
+```
+
+In either case, also make sure `ENABLE_TRACING` is set to `"true"` in your Continue config (`~/.continue/config.yaml`) so the MCP server sends traces:
+
+```yaml
+mcpServers:
+  - name: coding-swarm
+    # ...
+    env:
+      ENABLE_TRACING: "true"
+```
+
+**Use the swarm as normal.** Open http://localhost:6006 to see traces appear in real time.
+
+You can also start Phoenix manually in a separate terminal if you prefer:
+
+```bash
+.venv/bin/python start_phoenix.py
+```
+
+### What you'll see
+
+Phoenix shows a detailed trace for each crew execution:
+
+- **Crew span** — the top-level kickoff with total duration
+- **Task spans** — one per task (design, implement, review, test)
+- **Agent spans** — which agent handled each task
+- **LLM call spans** — every prompt/completion with token counts and latency
+
+### Options
+
+| Flag / Env Var | Default | Description |
+|----------------|---------|-------------|
+| `--port` (start_phoenix.py) | `6006` | Port for the Phoenix UI and OTLP collector |
+| `PHOENIX_ENDPOINT` | `http://localhost:6006/v1/traces` | Where the MCP server sends traces |
+| `PHOENIX_PROJECT_NAME` | `coding-crew` | Project name in the Phoenix UI |
+
+### Notes
+
+- Tracing is completely optional. When `ENABLE_TRACING` is not set (or `false`), no tracing dependencies are loaded and there is zero overhead.
+- If tracing is enabled but Phoenix is not running, the MCP server works normally — spans are silently dropped.
+- The dashboard (`dashboard.py`) shows a Phoenix status indicator in the log panel footer.
 
 ## Dashboard
 
